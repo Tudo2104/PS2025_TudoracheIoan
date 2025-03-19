@@ -22,6 +22,7 @@ import org.springframework.stereotype.Service;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 @Service
@@ -32,9 +33,7 @@ public class FriendshipService {
     private final UserRepository userRepository;
 
     public Friendship sendFriendRequest(User user, User friend) {
-        if (friendshipRepository.existsByUserAndFriend(user, friend)) {
-            throw new RuntimeException("Friendship already exists!");
-        }
+
 
         Friendship friendship = new Friendship();
         friendship.setUser(user);
@@ -59,19 +58,21 @@ public class FriendshipService {
         }
 
 
-        String name = request.get("name");
+        String name = request.get("email");
         if (name == null) {
             return ResponseEntity.badRequest().body("Friend's name is required!");
         }
 
 
-        User friend = userRepository.findUserByName(name);
-        if (friend == null) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body("Friend user not found!");
+        Optional<User> friend = userRepository.findUserByEmail(name);
+        if (friend.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body("Friend email not found!");
         }
 
-
-        sendFriendRequest(currentUser, friend);
+        if (friendshipRepository.existsByUserAndFriend(currentUser, friend.get())) {
+            return ResponseEntity.badRequest().body("Friendship sent earlier!");
+        }
+        sendFriendRequest(currentUser, friend.get());
 
         return ResponseEntity.ok("Friend request sent!");
     }
