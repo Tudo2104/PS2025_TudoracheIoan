@@ -1,5 +1,6 @@
 package com.example.demo.repository;
 
+import com.example.demo.dto.userdto.UserDTO;
 import com.example.demo.entity.User;
 import jakarta.transaction.Transactional;
 
@@ -14,4 +15,7 @@ public interface UserRepository extends JpaRepository<User, Long> {
 
     Optional<User> findUserByEmail(String email);
     List<User> findUserByRoleName(String roleName);
+    User findUserByName(String username);
+
+
 }

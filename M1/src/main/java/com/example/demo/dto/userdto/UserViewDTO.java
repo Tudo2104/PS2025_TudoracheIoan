@@ -2,6 +2,8 @@ package com.example.demo.dto.userdto;
 
 import lombok.*;
 
+import java.util.List;
+
 @Setter
 @Getter
 @NoArgsConstructor
@@ -16,6 +18,8 @@ public class UserViewDTO implements Comparable<UserViewDTO>{
     private String roleName;
 
     private String timeStamp;
+
+    private List<String> friends;
 
     @Override
     public int compareTo(UserViewDTO userViewDTO) {

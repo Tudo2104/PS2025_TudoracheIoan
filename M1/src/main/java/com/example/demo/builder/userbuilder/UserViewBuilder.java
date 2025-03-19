@@ -5,6 +5,7 @@ import com.example.demo.dto.userdto.UserViewDTO;
 import com.example.demo.entity.User;
 
 import java.time.format.DateTimeFormatter;
+import java.util.stream.Collectors;
 
 public class UserViewBuilder {
 
