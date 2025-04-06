@@ -1,9 +1,5 @@
 package com.example.demo.utils;
 
-import com.example.demo.entity.Role;
-import com.example.demo.entity.User;
-import com.example.demo.repository.RoleRepository;
-import com.example.demo.repository.UserRepository;
 import jakarta.annotation.Resource;
 import org.springframework.stereotype.Component;
 

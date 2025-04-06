@@ -2,20 +2,23 @@ package com.example.demo.service;
 
 import com.example.demo.builder.userbuilder.UserBuilder;
 import com.example.demo.builder.userbuilder.UserViewBuilder;
+import com.example.demo.dto.commentdto.CommentDTO;
+import com.example.demo.dto.postDTO.PostDTO;
 import com.example.demo.dto.userdto.UserDTO;
 import com.example.demo.dto.userdto.UserViewDTO;
-import com.example.demo.entity.PostStatus;
-import com.example.demo.entity.Role;
-import com.example.demo.entity.User;
-import com.example.demo.entity.UserPrincipal;
+import com.example.demo.entity.*;
 import com.example.demo.errorhandler.UserException;
+import com.example.demo.repository.FriendshipRepository;
 import com.example.demo.repository.RoleRepository;
 import com.example.demo.repository.UserRepository;
 import com.example.demo.validator.UserFieldValidator;
 import lombok.AllArgsConstructor;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Bean;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -28,7 +31,14 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
+import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 
+import javax.management.relation.RoleStatus;
+import java.io.IOException;
+import java.time.LocalDateTime;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -40,6 +50,8 @@ public class UserService   {
 
     private BCryptPasswordEncoder encoder = new BCryptPasswordEncoder(12);
 
+    private final FriendshipRepository friendshipRepository;
+
     private final RoleRepository roleRepository;
 
     private final UserRepository userRepository;
@@ -47,6 +59,8 @@ public class UserService   {
     private JWTService jwtService;
     @Autowired
     AuthenticationManager authManager;
+    @Autowired
+    private WebClient.Builder webClientBuilder;
 
     public List<UserViewDTO> findAllUserView() {
 
@@ -220,11 +234,11 @@ public class UserService   {
         if (currentUser.getStatus() == userDTO.getStatus()) {
             return ResponseEntity.badRequest().body("Invalid status: Status cannot be the same.");
         }
-        if (currentUser.getStatus() == PostStatus.FRIENDS || currentUser.getStatus() == PostStatus.PUBLIC) {
+        if (!userDTO.getStatus().equals(PostStatus.FRIENDS) && !userDTO.getStatus().equals(PostStatus.PUBLIC)) {
             return ResponseEntity.badRequest().body("Invalid status: Status doesn't exist.");
         }
 
-        currentUser.setStatus(PostStatus.PUBLIC);
+        currentUser.setStatus(userDTO.getStatus());
         userRepository.save(currentUser);
 
         return ResponseEntity.ok("Status updated successfully!");
@@ -312,8 +326,309 @@ public class UserService   {
         return ResponseEntity.ok("The role has been modified!!!!!!");
     }
 
+    public ResponseEntity<?> processPost(PostDTO postDTO, MultipartFile imageFile) {
+
+        Object principal = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        if (!(principal instanceof UserDetails)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("User must be authenticated!");
+        }
+        String username = ((UserDetails) principal).getUsername();
+        User currentUser = userRepository.findUserByName(username);
+        try {
+            if (imageFile != null && !imageFile.isEmpty()) {
+                postDTO.setImageData(imageFile.getBytes());
+                postDTO.setImageName(imageFile.getOriginalFilename());
+                postDTO.setImageType(imageFile.getContentType());
+            } else {
+                postDTO.setImageData(null);
+                postDTO.setImageName(null);
+                postDTO.setImageType(null);
+            }
+        } catch (IOException e) {
+            throw new RuntimeException("Error processing image file", e);
+        }
+        postDTO.setUserId(currentUser.getId());
+        postDTO.setCreatedAt(LocalDateTime.now());
 
 
+        PostDTO createdPost = webClientBuilder.build()
+                .post()
+                .uri("http://localhost:8082/api/post/create")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(postDTO)
+                .retrieve()
+                .bodyToMono(PostDTO.class)
+                .block();
+        createdPost.setImageData(null);
+
+        return ResponseEntity.ok(createdPost);
+    }
+
+    public ResponseEntity<?> showPost() {
+
+        Object principal = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        if (!(principal instanceof UserDetails)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("User must be authenticated!");
+        }
+
+        String username = ((UserDetails) principal).getUsername();
+        User currentUser = userRepository.findUserByName(username);
+
+        List<PostDTO> allPosts = webClientBuilder.build()
+                .get()
+                .uri("http://localhost:8082/api/post/showPosts")
+                .retrieve()
+                .bodyToFlux(PostDTO.class)
+                .collectList()
+                .block();
+
+        Iterator<PostDTO> postsAvailable = allPosts.iterator();
+        while (postsAvailable.hasNext()) {
+            PostDTO post = postsAvailable.next();
+            Long userId = post.getUserId();
+            User friendUser = userRepository.findUserById(userId);
+            if (!friendshipRepository.existsByUserAndFriend(currentUser, friendUser)
+                    && friendUser.getStatus().equals(PostStatus.FRIENDS)
+                    && !friendUser.getId().equals(currentUser.getId())) {
+                postsAvailable.remove();
+            }
+        }
+
+        if (allPosts != null) {
+            allPosts.forEach(post -> post.setImageData(null));
+            allPosts.forEach(post ->
+                    post.getComments().forEach(comment ->
+                            comment.setImageData(null)
+                    )
+            );
+        }
 
 
+        return ResponseEntity.ok(allPosts);
+    }
+
+    public ResponseEntity<String> deletePost(Long postID) {
+
+        Object principal = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        if (!(principal instanceof UserDetails)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("User must be authenticated!");
+        }
+
+        String username = ((UserDetails) principal).getUsername();
+        User currentUser = userRepository.findUserByName(username);
+
+        PostDTO postDTO = new PostDTO();
+        postDTO.setId(postID);
+        postDTO.setUserId(currentUser.getId());
+
+        try {
+            ResponseEntity<String> response = webClientBuilder.build()
+                    .method(HttpMethod.DELETE)
+                    .uri("http://localhost:8082/api/post/delete")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(postDTO)
+                    .retrieve()
+                    .toEntity(String.class)
+                    .block();
+
+            return response;
+
+        } catch (WebClientResponseException e) {
+            String errorBody = e.getResponseBodyAsString();
+            return ResponseEntity.status(e.getStatusCode()).body(errorBody);
+        }
+
+    }
+
+    public ResponseEntity<?> editPost(PostDTO postDTO, MultipartFile imageFile) {
+
+        Object principal = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        if (!(principal instanceof UserDetails)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("User must be authenticated!");
+        }
+        String username = ((UserDetails) principal).getUsername();
+        User currentUser = userRepository.findUserByName(username);
+        try {
+            if (imageFile != null && !imageFile.isEmpty()) {
+                postDTO.setImageData(imageFile.getBytes());
+                postDTO.setImageName(imageFile.getOriginalFilename());
+                postDTO.setImageType(imageFile.getContentType());
+            } else {
+                postDTO.setImageData(null);
+                postDTO.setImageName(null);
+                postDTO.setImageType(null);
+            }
+        } catch (IOException e) {
+            throw new RuntimeException("Error processing image file", e);
+        }
+        postDTO.setUserId(currentUser.getId());
+
+        try {
+            ResponseEntity<PostDTO> response = webClientBuilder.build()
+                    .put()
+                    .uri("http://localhost:8082/api/post/editPost")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(postDTO)
+                    .retrieve()
+                    .toEntity(PostDTO.class)
+                    .block();
+
+            PostDTO editedPost = response.getBody();
+            if (editedPost != null) {
+                editedPost.setImageData(null);
+            }
+
+            return ResponseEntity.ok(editedPost);
+
+        } catch (WebClientResponseException e) {
+            String errorBody = e.getResponseBodyAsString();
+            return ResponseEntity.status(e.getStatusCode()).body(errorBody);
+        }
+
+    }
+
+    public ResponseEntity<?> filterPost(PostDTO postDTO) {
+
+        Object principal = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        if (!(principal instanceof UserDetails)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("User must be authenticated!");
+        }
+
+        String username = ((UserDetails) principal).getUsername();
+        User currentUser = userRepository.findUserByName(username);
+
+        List<PostDTO> allPosts = webClientBuilder.build()
+                .post()
+                .uri("http://localhost:8082/api/post/filterPosts")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(postDTO)
+                .retrieve()
+                .bodyToFlux(PostDTO.class)
+                .collectList()
+                .block();
+
+        Iterator<PostDTO> postsAvailable = allPosts.iterator();
+        while (postsAvailable.hasNext()) {
+            PostDTO post = postsAvailable.next();
+            Long userId = post.getUserId();
+            User friendUser = userRepository.findUserById(userId);
+            if (!friendshipRepository.existsByUserAndFriend(currentUser, friendUser)
+                    && friendUser.getStatus().equals(PostStatus.FRIENDS)
+                    && !friendUser.getId().equals(currentUser.getId())) {
+                postsAvailable.remove();
+            }
+        }
+
+        if (allPosts != null) {
+            allPosts.forEach(post -> post.setImageData(null));
+            allPosts.forEach(post ->
+                    post.getComments().forEach(comment ->
+                            comment.setImageData(null)
+                    )
+            );
+        }
+
+
+        return ResponseEntity.ok(allPosts);
+    }
+
+    public ResponseEntity<?> processComment(CommentDTO commentDTO, MultipartFile imageFile) {
+
+        Object principal = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        if (!(principal instanceof UserDetails)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("User must be authenticated!");
+        }
+        String username = ((UserDetails) principal).getUsername();
+        User currentUser = userRepository.findUserByName(username);
+        try {
+            if (imageFile != null && !imageFile.isEmpty()) {
+                commentDTO.setImageData(imageFile.getBytes());
+                commentDTO.setImageName(imageFile.getOriginalFilename());
+                commentDTO.setImageType(imageFile.getContentType());
+            } else {
+                commentDTO.setImageData(null);
+                commentDTO.setImageName(null);
+                commentDTO.setImageType(null);
+            }
+        } catch (IOException e) {
+            throw new RuntimeException("Error processing image file", e);
+        }
+        commentDTO.setUserId(currentUser.getId());
+        commentDTO.setCreatedAt(LocalDateTime.now());
+        commentDTO.setUsername(currentUser.getName());
+
+        List<PostDTO> allPosts = webClientBuilder.build()
+                .get()
+                .uri("http://localhost:8082/api/post/showPosts")
+                .retrieve()
+                .bodyToFlux(PostDTO.class)
+                .collectList()
+                .block();
+
+        Iterator<PostDTO> postsAvailable = allPosts.iterator();
+        while (postsAvailable.hasNext()) {
+            PostDTO post = postsAvailable.next();
+            if(post.getId() == commentDTO.getPostId()){
+                Long userId = post.getUserId();
+                User friendUser = userRepository.findUserById(userId);
+                if (!friendshipRepository.existsByUserAndFriend(currentUser, friendUser)
+                        && friendUser.getStatus().equals(PostStatus.FRIENDS)
+                        && !friendUser.getId().equals(currentUser.getId())) {
+                    return ResponseEntity.status(HttpStatus.NOT_FOUND).body("Must be friends to comment");
+                }
+            }
+        }
+
+        try{
+            CommentDTO createdComment = webClientBuilder.build()
+                    .post()
+                    .uri("http://localhost:8082/api/post/createComment")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(commentDTO)
+                    .retrieve()
+                    .bodyToMono(CommentDTO.class)
+                    .block();
+
+            createdComment.setImageData(null);
+
+            return ResponseEntity.ok(createdComment);
+        } catch (WebClientResponseException e) {
+            String errorBody = e.getResponseBodyAsString();
+            return ResponseEntity.status(e.getStatusCode()).body(errorBody);
+        }
+    }
+    public ResponseEntity<String> deleteComment(CommentDTO commentDTO) {
+
+        Object principal = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        if (!(principal instanceof UserDetails)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("User must be authenticated!");
+        }
+
+        String username = ((UserDetails) principal).getUsername();
+        User currentUser = userRepository.findUserByName(username);
+
+        commentDTO.setUserId(currentUser.getId());
+
+        String endpoint = (currentUser.getRole().getId() == 1)
+                ? "http://localhost:8082/api/post/deleteCommentAdmin"
+                : "http://localhost:8082/api/post/deleteComment";
+
+        try {
+            ResponseEntity<String> response = webClientBuilder.build()
+                    .method(HttpMethod.DELETE)
+                    .uri(endpoint)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(commentDTO)
+                    .retrieve()
+                    .toEntity(String.class)
+                    .block();
+
+            return response;
+
+        } catch (WebClientResponseException e) {
+            return ResponseEntity.status(e.getStatusCode()).body(e.getResponseBodyAsString());
+        }
+
+
+    }
 }

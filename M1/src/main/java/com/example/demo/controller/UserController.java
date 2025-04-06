@@ -1,6 +1,8 @@
 package com.example.demo.controller;
 
 
+import com.example.demo.dto.commentdto.CommentDTO;
+import com.example.demo.dto.postDTO.PostDTO;
 import com.example.demo.dto.userdto.UserDTO;
 import com.example.demo.entity.Friendship;
 import com.example.demo.entity.PostStatus;
@@ -21,6 +23,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.Map;
 import java.util.Optional;
@@ -94,4 +97,42 @@ public class UserController {
     public ResponseEntity<?> processUpdateRoleForm(@RequestBody(required = false) Map<String, String> request) throws UserException {
         return userService.updateRole(request);
     }
+
+    @RequestMapping(method = RequestMethod.POST, consumes = MediaType.MULTIPART_FORM_DATA_VALUE, value = "/createPost")
+    public ResponseEntity<?> processPostForm(@RequestPart("postDTO") PostDTO postDTO,
+                                             @RequestPart(value = "imageFile", required = false) MultipartFile imageFile) {
+        return new ResponseEntity<>(userService.processPost(postDTO,imageFile), HttpStatus.OK);
+    }
+
+    @RequestMapping(method = RequestMethod.GET, value = "/getAllPosts", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<?> processGetAllPostForm() {
+        return new ResponseEntity<>(userService.showPost(), HttpStatus.OK);
+    }
+    @RequestMapping(method = RequestMethod.DELETE, value = "/deletePost", consumes  = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<String> processDeletePostForm(@RequestBody Long postID) {
+        return userService.deletePost(postID);
+    }
+    @RequestMapping(method = RequestMethod.PUT, consumes = MediaType.MULTIPART_FORM_DATA_VALUE, value = "/editPost")
+    public ResponseEntity<?> processEditPostForm(@RequestPart("postDTO") PostDTO postDTO,
+                                             @RequestPart(value = "imageFile", required = false) MultipartFile imageFile) {
+        return new ResponseEntity<>(userService.editPost(postDTO,imageFile), HttpStatus.OK);
+
+    }
+
+    @RequestMapping(method = RequestMethod.POST, value = "/filterAllPosts", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<?> processFilterAllPostForm(@RequestBody PostDTO postDTO) {
+        return new ResponseEntity<>(userService.filterPost(postDTO), HttpStatus.OK);
+    }
+
+    @RequestMapping(method = RequestMethod.POST, consumes = MediaType.MULTIPART_FORM_DATA_VALUE, value = "/createComment")
+    public ResponseEntity<?> processCommentPostForm(@RequestPart("commentDTO") CommentDTO commentDTO,
+                                                    @RequestPart(value = "imageFile", required = false) MultipartFile imageFile) {
+        return new ResponseEntity<>(userService.processComment(commentDTO,imageFile), HttpStatus.OK);
+    }
+
+    @RequestMapping(method = RequestMethod.DELETE, value = "/deleteComment", consumes  = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<String> processDeleteCommentForm(@RequestBody CommentDTO commentDTO) {
+        return userService.deleteComment(commentDTO);
+    }
+
 }
