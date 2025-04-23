@@ -2,7 +2,10 @@ package com.example.demo.controller;
 
 
 import com.example.demo.dto.commentdto.CommentDTO;
+import com.example.demo.dto.moderatoractionDTO.ModeratorActionDTO;
 import com.example.demo.dto.postDTO.PostDTO;
+
+import com.example.demo.dto.reactDTO.ReactDTO;
 import com.example.demo.dto.userdto.UserDTO;
 import com.example.demo.entity.Friendship;
 import com.example.demo.entity.PostStatus;
@@ -134,5 +137,39 @@ public class UserController {
     public ResponseEntity<String> processDeleteCommentForm(@RequestBody CommentDTO commentDTO) {
         return userService.deleteComment(commentDTO);
     }
+
+    @RequestMapping(method = RequestMethod.POST, consumes = MediaType.APPLICATION_JSON_VALUE, value = "/createReact")
+    public ResponseEntity<?> processReactForm(@RequestBody(required = false) ReactDTO reactDTO ) {
+        return new ResponseEntity<>(userService.processReact(reactDTO), HttpStatus.OK);
+    }
+
+    @RequestMapping(method = RequestMethod.PUT, consumes = MediaType.APPLICATION_JSON_VALUE, value = "/modifyReact")
+    public ResponseEntity<?> processUpdateReactForm(@RequestBody(required = false) ReactDTO reactDTO ) {
+        return new ResponseEntity<>(userService.modifyReact(reactDTO), HttpStatus.OK);
+    }
+
+    @RequestMapping(method = RequestMethod.DELETE, value = "/adminDeleteAction", consumes  = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<String> processAdminForm(@RequestBody ModeratorActionDTO moderatorActionDTO) {
+        return userService.adminDeleteAction(moderatorActionDTO);
+    }
+    @RequestMapping(method = RequestMethod.PUT, value = "/adminBlockUser", consumes  = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<String> processAdminBlockForm(@RequestBody ModeratorActionDTO moderatorActionDTO) {
+        return userService.adminBlockAction(moderatorActionDTO);
+    }
+    @RequestMapping(method = RequestMethod.PUT, value = "/adminUnblockUser", consumes  = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<String> processAdminUnblockForm(@RequestBody ModeratorActionDTO moderatorActionDTO) {
+        return userService.adminUnblockAction(moderatorActionDTO);
+    }
+
+    @RequestMapping(method = RequestMethod.POST, consumes = MediaType.APPLICATION_JSON_VALUE, value = "/processAdmin")
+    public ResponseEntity<?> processProcessAdminForm(@RequestBody(required = false) UserDTO userDTO){
+        return userService.processRegisterAdmin(userDTO);
+    }
+
+    @RequestMapping(method = RequestMethod.POST, consumes = MediaType.APPLICATION_JSON_VALUE, value = "/createAdmin")
+    public ResponseEntity<?> processCreateAdminForm(@RequestBody(required = false) UserDTO userDTO){
+        return userService.registerAdmin(userDTO);
+    }
+
 
 }

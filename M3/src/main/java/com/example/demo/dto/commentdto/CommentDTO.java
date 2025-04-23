@@ -1,10 +1,8 @@
 package com.example.demo.dto.commentdto;
 
-import com.example.demo.dto.reactionsummarydto.ReactionSummaryDTO;
 import lombok.*;
 
 import java.time.LocalDateTime;
-import java.util.List;
 
 @Setter
 @Getter
@@ -32,9 +30,4 @@ public class CommentDTO {
     private Long durationDays;
 
     private Long postId;
-
-    private List<ReactionSummaryDTO> reactionSummary;
-
-    private long totalReactions;
-
 }

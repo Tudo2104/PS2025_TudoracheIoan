@@ -3,7 +3,11 @@ package com.example.demo.service;
 import com.example.demo.builder.userbuilder.UserBuilder;
 import com.example.demo.builder.userbuilder.UserViewBuilder;
 import com.example.demo.dto.commentdto.CommentDTO;
+import com.example.demo.dto.moderatorDTO.ModeratorDTO;
+import com.example.demo.dto.moderatoractionDTO.ModeratorActionDTO;
 import com.example.demo.dto.postDTO.PostDTO;
+import com.example.demo.dto.reactDTO.ReactDTO;
+import com.example.demo.dto.reactionsummarydto.ReactionSummaryDTO;
 import com.example.demo.dto.userdto.UserDTO;
 import com.example.demo.dto.userdto.UserViewDTO;
 import com.example.demo.entity.*;
@@ -12,36 +16,32 @@ import com.example.demo.repository.FriendshipRepository;
 import com.example.demo.repository.RoleRepository;
 import com.example.demo.repository.UserRepository;
 import com.example.demo.validator.UserFieldValidator;
-import lombok.AllArgsConstructor;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.annotation.Bean;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
-import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 
-import javax.management.relation.RoleStatus;
 import java.io.IOException;
 import java.time.LocalDateTime;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
@@ -206,16 +206,81 @@ public class UserService   {
         return userRepository.save(userSave).getId();
     }
 
-    public String verifyUser(UserDTO userDTO) throws UserException {
+    public ResponseEntity<?> registerAdmin(UserDTO userDTO) {
 
-        Authentication authentication = authManager.authenticate(new UsernamePasswordAuthenticationToken(userDTO.getName(), userDTO.getPassword()));
-        if (authentication.isAuthenticated()) {
-            return jwtService.generateToken(userDTO.getName());
-        } else {
-            return "fail";
+        if (userDTO.getName() == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Username must be written");
         }
 
+        if (userDTO.getEmail() == null) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Email must be written");
+        }
+
+        if (userDTO.getPassword() == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Password must be written");
+        }
+
+        Optional<Role> role = roleRepository.findRoleByName("Admin");
+
+        if (role.isEmpty()) {
+
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Role not found with name field: Admin");
+        }
+
+        Optional<User> user = userRepository.findUserByEmail(userDTO.getEmail());
+        if(user.isPresent() ){
+
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("User record does not permit duplicates for email field: " + userDTO.getEmail());
+        }
+
+        User userSave = UserBuilder.generateEntityFromDTO(userDTO, role.get());
+        userSave.setPassword(encoder.encode(userSave.getPassword()));
+        userRepository.save(userSave);
+
+        return ResponseEntity.status(HttpStatus.OK).body(UserBuilder.generateDTOFromEntity(userSave));
+
     }
+
+    public String verifyUser(UserDTO userDTO) throws UserException {
+        try {
+            authManager.authenticate(
+                    new UsernamePasswordAuthenticationToken(userDTO.getName(), userDTO.getPassword())
+            );
+
+            User user = userRepository.findUserByName(userDTO.getName());
+            userDTO.setId(user.getId());
+
+            Boolean isBlocked = webClientBuilder.build()
+                    .post()
+                    .uri("http://localhost:8083/api/mod/verifyUser")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(userDTO)
+                    .retrieve()
+                    .bodyToMono(Boolean.class)
+                    .block();
+
+            if (Boolean.TRUE.equals(isBlocked)) {
+                return "Account is blocked";
+            }
+            String notification = webClientBuilder.build()
+                    .post()
+                    .uri("http://localhost:8083/api/mod/getNotificationUser")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(userDTO)
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .block();
+
+            return "User logged in : " + jwtService.generateToken(userDTO.getName()) + "\n" + notification;
+
+        } catch (BadCredentialsException ex) {
+            return "Wrong credentials";
+        } catch (WebClientResponseException e) {
+            throw new UserException("Moderator check failed: " + e.getResponseBodyAsString());
+        }
+    }
+
+
     public ResponseEntity<?> updateStatus(UserDTO userDTO) {
 
         Object principal = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
@@ -395,14 +460,52 @@ public class UserService   {
         }
 
         if (allPosts != null) {
-            allPosts.forEach(post -> post.setImageData(null));
-            allPosts.forEach(post ->
-                    post.getComments().forEach(comment ->
-                            comment.setImageData(null)
-                    )
-            );
-        }
+            for (PostDTO post : allPosts) {
+                post.setImageData(null);
 
+
+                List<ReactionSummaryDTO> postReactions = webClientBuilder.build()
+                        .get()
+                        .uri("http://localhost:8083/api/react/summaryByPostId/" + post.getId())
+                        .retrieve()
+                        .bodyToFlux(ReactionSummaryDTO.class)
+                        .collectList()
+                        .block();
+
+                post.setReactionSummary(postReactions);
+
+
+                for (CommentDTO comment : post.getComments()) {
+                    comment.setImageData(null);
+
+                    List<ReactionSummaryDTO> commentReactions = webClientBuilder.build()
+                            .get()
+                            .uri("http://localhost:8083/api/react/summaryByCommentId/" + comment.getId())
+                            .retrieve()
+                            .bodyToFlux(ReactionSummaryDTO.class)
+                            .collectList()
+                            .block();
+                    long totalReacts = 0;
+                    for (ReactionSummaryDTO react : commentReactions) {
+                        totalReacts += react.getCount();
+                    }
+
+                    comment.setTotalReactions(totalReacts);
+                    comment.setReactionSummary(commentReactions);
+                }
+                if (post.getComments() != null && !post.getComments().isEmpty()) {
+
+                    List<CommentDTO> sortedComments = new ArrayList<>(post.getComments());
+
+                    sortedComments.sort((c1, c2) -> Long.compare(c2.getTotalReactions(), c1.getTotalReactions()));
+
+                    Set<CommentDTO> sortedSet = new LinkedHashSet<>(sortedComments);
+
+                    post.setComments(sortedSet);
+                }
+
+            }
+        }
 
         return ResponseEntity.ok(allPosts);
     }
@@ -628,7 +731,334 @@ public class UserService   {
         } catch (WebClientResponseException e) {
             return ResponseEntity.status(e.getStatusCode()).body(e.getResponseBodyAsString());
         }
+    }
 
+    public ResponseEntity<?> processReact(ReactDTO reactDto) {
+        Object principal = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        if (!(principal instanceof UserDetails)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("User must be authenticated!");
+        }
+
+        String username = ((UserDetails) principal).getUsername();
+        User currentUser = userRepository.findUserByName(username);
+        if (currentUser == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("User not found!");
+        }
+        if (reactDto.getType() == null) {
+            return ResponseEntity.badRequest().body("Reaction type must be provided");
+        }
+
+        if (reactDto.getPostId() != null && reactDto.getCommentId() != null) {
+            return ResponseEntity.badRequest().body("Cannot react to both a post and a comment at the same time");
+        }
+
+        if (reactDto.getCommentId() != null) {
+            reactDto.setPostId(null);
+        }
+
+        if (reactDto.getPostId() != null) {
+            reactDto.setCommentId(null);
+        }
+
+
+        reactDto.setUserId(currentUser.getId());
+
+        //Post
+        if (reactDto.getPostId() != null) {
+            PostDTO post;
+            try {
+                post = webClientBuilder.build()
+                        .get()
+                        .uri("http://localhost:8082/api/post/getPostById/" + reactDto.getPostId())
+                        .retrieve()
+                        .bodyToMono(PostDTO.class)
+                        .block();
+            } catch (WebClientResponseException.NotFound e) {
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).body("Post not found");
+            }
+
+
+            Long authorId = post.getUserId();
+            User postAuthor = userRepository.findUserById(authorId);
+
+            if (!authorId.equals(currentUser.getId()) &&
+                    postAuthor.getStatus().equals(PostStatus.FRIENDS) &&
+                    !friendshipRepository.existsByUserAndFriend(currentUser, postAuthor)) {
+
+
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Must be friends to react to this post");
+            }
+        }
+
+        //Comment
+        if (reactDto.getCommentId() != null) {
+            CommentDTO comment;
+            try{
+            comment = webClientBuilder.build()
+                    .get()
+                    .uri("http://localhost:8082/api/post/getCommentById/" + reactDto.getCommentId())
+                    .retrieve()
+                    .bodyToMono(CommentDTO.class)
+                    .block();
+            } catch (WebClientResponseException.NotFound e) {
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).body("Comment not found");
+            }
+
+
+            PostDTO parentPost;
+            try {
+                parentPost = webClientBuilder.build()
+                        .get()
+                        .uri("http://localhost:8082/api/post/getPostById/" + comment.getPostId())
+                        .retrieve()
+                        .bodyToMono(PostDTO.class)
+                        .block();
+            } catch (WebClientResponseException.NotFound e) {
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).body("Parent post not found");
+            }
+
+
+            Long postAuthorId = parentPost.getUserId();
+            User postAuthor = userRepository.findUserById(postAuthorId);
+
+            if (!postAuthorId.equals(currentUser.getId()) &&
+                    postAuthor.getStatus().equals(PostStatus.FRIENDS) &&
+                    !friendshipRepository.existsByUserAndFriend(currentUser, postAuthor)) {
+
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Must be friends to react to this comment");
+            }
+        }
+
+        try {
+            ReactDTO createdReact = webClientBuilder.build()
+                    .post()
+                    .uri("http://localhost:8083/api/react/createReact")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(reactDto)
+                    .retrieve()
+                    .bodyToMono(ReactDTO.class)
+                    .block();
+
+            return ResponseEntity.ok(createdReact);
+        } catch (WebClientResponseException e) {
+            String errorBody = e.getResponseBodyAsString();
+            return ResponseEntity.status(e.getStatusCode()).body(errorBody);
+        }
 
     }
+
+    public ResponseEntity<?> modifyReact(ReactDTO reactDto) {
+        Object principal = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        if (!(principal instanceof UserDetails)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("User must be authenticated!");
+        }
+
+        String username = ((UserDetails) principal).getUsername();
+        User currentUser = userRepository.findUserByName(username);
+        if (currentUser == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("User not found!");
+        }
+        if (reactDto.getType() == null) {
+            return ResponseEntity.badRequest().body("Reaction type must be provided");
+        }
+        if (reactDto.getId() == null) {
+            return ResponseEntity.badRequest().body("React Id must be provided");
+        }
+
+        if (reactDto.getCommentId() != null) {
+            return ResponseEntity.badRequest().body("Comment Id must not be provided");
+        }
+
+        if (reactDto.getPostId() != null) {
+            return ResponseEntity.badRequest().body("Comment Id must not be provided");
+        }
+        reactDto.setUserId(currentUser.getId());
+
+        try {
+            ReactDTO createdReact = webClientBuilder.build()
+                    .put()
+                    .uri("http://localhost:8083/api/react/modifyReact")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(reactDto)
+                    .retrieve()
+                    .bodyToMono(ReactDTO.class)
+                    .block();
+
+            return ResponseEntity.ok(createdReact);
+        } catch (WebClientResponseException e) {
+            String errorBody = e.getResponseBodyAsString();
+            return ResponseEntity.status(e.getStatusCode()).body(errorBody);
+        }
+
+    }
+
+    public ResponseEntity<String> adminDeleteAction(ModeratorActionDTO moderatorActionDTO) {
+
+        Object principal = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        if (!(principal instanceof UserDetails)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("User must be authenticated!");
+        }
+
+        String username = ((UserDetails) principal).getUsername();
+        User currentUser = userRepository.findUserByName(username);
+        if (currentUser.getRole().getId() != 1) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Must be an admin to delete posts with this action.");
+        }
+
+        moderatorActionDTO.setModeratorId(currentUser.getId());
+        if(moderatorActionDTO.getTargetUserId() != null){
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Method for deleting posts or comments, not blocking users.");
+        }
+
+        if(moderatorActionDTO.getTargetCommentId() != null &&moderatorActionDTO.getTargetPostId() != null ){
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Cannot perform both deleting in the same time introduce them one by one.");
+        }
+
+        try {
+            ResponseEntity<String> response = webClientBuilder.build()
+                    .method(HttpMethod.DELETE)
+                    .uri("http://localhost:8083/api/mod/deleteAdmin")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(moderatorActionDTO)
+                    .retrieve()
+                    .toEntity(String.class)
+                    .block();
+
+            return response;
+
+        } catch (WebClientResponseException e) {
+            return ResponseEntity.status(e.getStatusCode()).body(e.getResponseBodyAsString());
+        }
+    }
+
+    public ResponseEntity<String> adminBlockAction(ModeratorActionDTO moderatorActionDTO) {
+
+        Object principal = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        if (!(principal instanceof UserDetails)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("User must be authenticated!");
+        }
+
+        String username = ((UserDetails) principal).getUsername();
+        User currentUser = userRepository.findUserByName(username);
+        if (currentUser.getRole().getId() != 1) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Must be an admin to block.");
+        }
+
+        moderatorActionDTO.setModeratorId(currentUser.getId());
+
+        if(moderatorActionDTO.getTargetCommentId() != null || moderatorActionDTO.getTargetPostId()!= null){
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Method for blocking users,not deleting posts or comments.");
+        }
+        if(moderatorActionDTO.getTargetUserId() == null){
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Add an user Id to block/unblock.");
+        }
+        Optional<User> targetUser = userRepository.findById(moderatorActionDTO.getTargetUserId());
+        if(targetUser.isEmpty()){
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("The user with this Id doesn't exist.");
+        }
+
+        try {
+            ResponseEntity<String> response = webClientBuilder.build()
+                    .method(HttpMethod.PUT)
+                    .uri("http://localhost:8083/api/mod/blockUser")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(moderatorActionDTO)
+                    .retrieve()
+                    .toEntity(String.class)
+                    .block();
+
+            return response;
+
+        } catch (WebClientResponseException e) {
+            return ResponseEntity.status(e.getStatusCode()).body(e.getResponseBodyAsString());
+        }
+    }
+
+    public ResponseEntity<String> adminUnblockAction(ModeratorActionDTO moderatorActionDTO) {
+
+        Object principal = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        if (!(principal instanceof UserDetails)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("User must be authenticated!");
+        }
+
+        String username = ((UserDetails) principal).getUsername();
+        User currentUser = userRepository.findUserByName(username);
+        if (currentUser.getRole().getId() != 1) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Must be an admin to unblock.");
+        }
+
+        moderatorActionDTO.setModeratorId(currentUser.getId());
+
+        if(moderatorActionDTO.getTargetCommentId() != null || moderatorActionDTO.getTargetPostId()!= null){
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Method for unblocking users,not deleting posts or comments.");
+        }
+        if(moderatorActionDTO.getTargetUserId() == null){
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Add an user Id to unblock.");
+        }
+        Optional<User> targetUser = userRepository.findById(moderatorActionDTO.getTargetUserId());
+        if(targetUser.isEmpty()){
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("The user with this Id doesn't exist.");
+        }
+
+        try {
+            ResponseEntity<String> response = webClientBuilder.build()
+                    .method(HttpMethod.PUT)
+                    .uri("http://localhost:8083/api/mod/unblockUser")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(moderatorActionDTO)
+                    .retrieve()
+                    .toEntity(String.class)
+                    .block();
+
+            return response;
+
+        } catch (WebClientResponseException e) {
+            return ResponseEntity.status(e.getStatusCode()).body(e.getResponseBodyAsString());
+        }
+    }
+
+    public ResponseEntity<?> processRegisterAdmin(UserDTO userDTO) {
+
+        Object principal = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        if (!(principal instanceof UserDetails)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("User must be authenticated!");
+        }
+
+        String username = ((UserDetails) principal).getUsername();
+        User currentUser = userRepository.findUserByName(username);
+        if (currentUser.getRole().getId() != 1) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Must be an admin to create an admin account.");
+        }
+        ModeratorDTO moderatorDTO = new ModeratorDTO();
+        moderatorDTO.setModeratorId(currentUser.getId());
+        moderatorDTO.setUserDTO(userDTO);
+
+        HttpServletRequest request = ((ServletRequestAttributes) RequestContextHolder.getRequestAttributes()).getRequest();
+        String token = request.getHeader("Authorization");
+
+        if (token == null || token.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Authorization token is missing");
+        }
+
+
+        try {
+            UserDTO response = webClientBuilder.build()
+                    .method(HttpMethod.POST)
+                    .uri("http://localhost:8083/api/mod/createAdmin")
+                    .header("Authorization", token)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(moderatorDTO)
+                    .retrieve()
+                    .bodyToMono(UserDTO.class)
+                    .block();
+
+            return ResponseEntity.ok(response);
+
+        }catch (WebClientResponseException e) {
+            String errorBody = e.getResponseBodyAsString();
+            return ResponseEntity.status(e.getStatusCode()).body(errorBody);
+        }
+
+    }
+
 }

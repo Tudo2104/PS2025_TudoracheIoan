@@ -5,6 +5,7 @@ import com.example.demo.builder.postbuilder.CommentDTOBuilder;
 import com.example.demo.builder.postbuilder.PostBuilder;
 import com.example.demo.builder.postbuilder.PostDTOBuilder;
 import com.example.demo.dto.commentdto.CommentDTO;
+import com.example.demo.dto.moderatoractionDTO.ModeratorActionDTO;
 import com.example.demo.dto.postdto.PostDTO;
 import com.example.demo.dto.userdto.UserDTO;
 import com.example.demo.entity.Comment;
@@ -85,6 +86,16 @@ public class PostService {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body("You can only delete your own posts");
         }
         Post post = myPost.get();
+        postRepository.delete(post);
+        return ResponseEntity.ok("Post deleted successfully");
+    }
+    public ResponseEntity<String> deletePostAdmin(ModeratorActionDTO moderatorActionDTO) {
+        Optional<Post> postOptional = postRepository.findById(moderatorActionDTO.getTargetPostId());
+
+        if (postOptional.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body("Post not found");
+        }
+        Post post = postOptional.get();
         postRepository.delete(post);
         return ResponseEntity.ok("Post deleted successfully");
     }
@@ -232,4 +243,44 @@ public class PostService {
         return ResponseEntity.ok("Comment deleted successfully");
     }
 
+
+    public List<CommentDTO> getAllComments() {
+        List<Comment> allPosts = commentRepository.findAllByOrderByCreatedAtDesc();
+        return allPosts.stream()
+                .map(CommentDTOBuilder::generateDTOFromEntity)
+                .collect(Collectors.toList());
+    }
+
+    public ResponseEntity<CommentDTO> getCommentById(Long id) {
+        Comment comment = commentRepository.findById(id).orElse(null);
+
+        if (comment == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(null);
+        }
+
+        CommentDTO dto = CommentDTOBuilder.generateDTOFromEntity(comment);
+        return ResponseEntity.ok(dto);
+    }
+
+    public ResponseEntity<PostDTO> getPostById(Long id) {
+        Post post = postRepository.findById(id).orElse(null);
+
+        if (post == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(null);
+        }
+
+        PostDTO dto = PostDTOBuilder.generateDTOFromEntity(post);
+        return ResponseEntity.ok(dto);
+    }
+
+    public ResponseEntity<String> deleteCommentModerator(ModeratorActionDTO moderatorActionDTO) {
+        Optional<Comment> commentOptional = commentRepository.findById(moderatorActionDTO.getTargetCommentId());
+
+        if (commentOptional.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body("Comment not found");
+        }
+        Comment comment = commentOptional.get();
+        commentRepository.delete(comment);
+        return ResponseEntity.ok("Comment deleted successfully");
+    }
 }

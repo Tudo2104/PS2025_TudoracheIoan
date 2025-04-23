@@ -1,7 +1,8 @@
 package com.example.demo.dto.postDTO;
 
 import com.example.demo.dto.commentdto.CommentDTO;
-import com.example.demo.dto.hashtagDTO.HashtagDTO;
+
+import com.example.demo.dto.hastagdto.HashtagDTO;
 import com.example.demo.dto.reactionsummarydto.ReactionSummaryDTO;
 import lombok.*;
 

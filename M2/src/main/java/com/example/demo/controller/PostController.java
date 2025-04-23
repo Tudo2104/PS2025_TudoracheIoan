@@ -2,6 +2,7 @@ package com.example.demo.controller;
 
 
 import com.example.demo.dto.commentdto.CommentDTO;
+import com.example.demo.dto.moderatoractionDTO.ModeratorActionDTO;
 import com.example.demo.dto.postdto.PostDTO;
 import com.example.demo.dto.userdto.UserDTO;
 import com.example.demo.errorhandler.UserException;
@@ -29,9 +30,14 @@ public class PostController {
     public ResponseEntity<List<PostDTO>> processShowPostForm() {
         return ResponseEntity.ok(postService.getAllPosts());
     }
+
     @RequestMapping(method = RequestMethod.DELETE, value = "/delete", consumes  = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<String> processDeletePostForm(@RequestBody PostDTO postDTO) {
         return postService.deletePost(postDTO);
+    }
+    @RequestMapping(method = RequestMethod.DELETE, value = "/deletePostAdmin", consumes  = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<String> processDeletePostForm(@RequestBody ModeratorActionDTO moderatorActionDTO) {
+        return postService.deletePostAdmin(moderatorActionDTO);
     }
 
     @RequestMapping(method = RequestMethod.PUT, consumes = MediaType.APPLICATION_JSON_VALUE, value = "/editPost")
@@ -58,5 +64,26 @@ public class PostController {
     public ResponseEntity<String> processDeleteCommentAdminForm(@RequestBody CommentDTO commentDTO) {
         return postService.deleteCommentAdmin(commentDTO);
     }
+    @RequestMapping(method = RequestMethod.DELETE, value = "/deleteCommentModerator", consumes  = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<String> processDeleteCommentAdminForm(@RequestBody ModeratorActionDTO moderatorActionDTO) {
+        return postService.deleteCommentModerator(moderatorActionDTO);
+    }
+
+    @RequestMapping(method = RequestMethod.GET, value = "/showComments")
+    public ResponseEntity<List<CommentDTO>> processCommentsForm() {
+        return ResponseEntity.ok(postService.getAllComments());
+    }
+
+    @RequestMapping(method = RequestMethod.GET, value = "/getCommentById/{id}")
+    public ResponseEntity<CommentDTO> processGetCommentForm(@PathVariable Long id) {
+        return postService.getCommentById(id);
+    }
+
+    @RequestMapping(method = RequestMethod.GET, value = "/getPostById/{id}")
+    public ResponseEntity<PostDTO> processGetPostForm(@PathVariable Long id) {
+        return postService.getPostById(id);
+    }
+
+
 
 }

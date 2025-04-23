@@ -6,6 +6,7 @@ import com.example.demo.entity.Hashtag;
 import com.example.demo.entity.Post;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -18,9 +19,13 @@ public class PostDTOBuilder {
                         .name(h.getName())
                         .build())
                 .collect(Collectors.toSet());
+       if(post.getComments() == null){
+           post.setComments(Set.of());
+       }
         Set<CommentDTO> commentDTOs = post.getComments().stream()
                 .map(CommentDTOBuilder::generateDTOFromEntity)
                 .collect(Collectors.toSet());
+
 
         return PostDTO.builder()
                 .id(post.getId())
